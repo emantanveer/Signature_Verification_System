@@ -1,0 +1,102 @@
+% Set the paths to the folders containing genuine and forged signature images
+genuineFolderPath = '/MATLAB Drive/Dataset/trainimg/genuine/';
+forgedFolderPath = '/MATLAB Drive/Dataset/trainimg/forged/';
+
+% Load genuine signature data
+genuineFiles = dir(fullfile(genuineFolderPath, '*.jpeg'));
+numGenuine = numel(genuineFiles);
+genuineLabels = ones(numGenuine, 1);  % Assign label 1 for genuine signatures
+
+% Load forged signature data
+forgedFiles = dir(fullfile(forgedFolderPath, '*.jpeg'));
+numForged = numel(forgedFiles);
+forgedLabels = zeros(numForged, 1);  % Assign label 0 for forged signatures
+
+% Combine genuine and forged data
+allFiles = [genuineFiles; forgedFiles];
+allLabels = [genuineLabels; forgedLabels];
+
+% Convert labels to categorical array
+allLabels = categorical(allLabels);
+
+% HOG parameters
+cellSize = [8, 8];
+blockSize = [2, 2];
+numBins = 9;
+
+% Initialize data matrix for HOG features
+hogFeatures = [];
+
+% Loop through each signature image and extract HOG features
+for i = 1:numel(allFiles)
+    % Read the signature image
+    imagePath = fullfile(allFiles(i).folder, allFiles(i).name);
+    img = imread(imagePath);
+
+    % Convert the image to grayscale
+    grayImg = rgb2gray(img);
+    resizedImg = imresize(grayImg, [100, 200]);
+
+    % Apply median filter
+    filteredImg = medfilt2(resizedImg);
+    
+    % Extract HOG features
+    features = extractHOGFeatures(filteredImg, 'CellSize', cellSize, 'BlockSize', blockSize, 'NumBins', numBins);
+     
+    % Append features to the matrix (features are stored as rows)
+    hogFeatures = [hogFeatures; features];
+end
+
+% Specify the ratio of the test set
+test_ratio = 0.2;  % You can adjust this according to your preference
+
+% Create a partition for the indices
+c = cvpartition(allLabels, 'HoldOut', test_ratio);
+
+% Get the training and testing indices
+train_indices = training(c);
+test_indices = test(c);
+
+% Use the indices to get the actual file paths and labels
+train_files = allFiles(train_indices);
+test_files = allFiles(test_indices);
+
+train_labels = allLabels(train_indices);
+test_labels = allLabels(test_indices);
+
+% Display the number of samples in each set
+fprintf('Number of training samples: %d\n', sum(train_indices));
+fprintf('Number of testing samples: %d\n', sum(test_indices));
+
+% Train the SVM
+svm_model = fitcsvm(hogFeatures(train_indices, :), train_labels);
+
+% Use the indices to get the HOG features for the test set
+hogFeaturesTest = hogFeatures(test_indices, :);
+
+% Make predictions on the test set
+predictions = predict(svm_model, hogFeaturesTest);
+
+% Display verification results for each test signature
+disp('Signature Verification Results:');
+for i = 1:numel(predictions)
+    if double(predictions(i)) == 1
+        disp(['Signature ', num2str(i), ' is genuine.']);
+    else
+        disp(['Signature ', num2str(i), ' is forged.']);
+    end
+end
+
+% Convert categorical array to numeric array
+numeric_test_labels = double(test_labels);
+
+% Calculate accuracy
+correct_predictions = sum(double(predictions) == numeric_test_labels);
+total_samples = numel(numeric_test_labels);
+accuracy = correct_predictions / total_samples;
+fprintf('Accuracy: %.2f%%\n', accuracy * 100);
+
+% Draw confusion matrix
+conf_matrix = confusionmat(numeric_test_labels, double(predictions));
+figure;
+confusionchart(conf_matrix, {'Forged', 'Genuine'}, 'Title', 'Confusion Matrix');
